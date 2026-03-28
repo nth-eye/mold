@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Create a version tag after successful build
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC 15
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-15 g++-15
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_C_COMPILER=gcc-15 \
+            -DCMAKE_CXX_COMPILER=g++-15 \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DCMAKE_CXX_FLAGS="-Os -DNDEBUG -fdata-sections -ffunction-sections" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections"
+
+      - name: Build
+        run: cmake --build build --target exec_mold --target test_mold -j$(nproc)
+
+      - name: Run tests
+        run: build/test_mold --no-intro --no-version
+
+      - name: Binary size analysis
+        run: |
+          BIN=build/exec_mold
+
+          {
+            echo "## Parse/Write/Handler function sizes"
+            echo '```'
+            nm -C --radix=d --size-sort "$BIN" | grep " [TtWw] " | \
+              grep -E 'parse_impl|write_impl|handler_fn|format_handler' | sort -rn
+            echo '```'
+
+            echo ""
+            echo "## Section sizes"
+            echo '```'
+            size -A "$BIN" | grep -E '^\.' | sort -k2 -rn
+            echo '```'
+
+            echo ""
+            echo "## Symbol counts"
+            TEXT_SYMS=$(nm "$BIN" | grep -c " [TtWw] ")
+            DATA_SYMS=$(nm "$BIN" | grep -c " [DdSs] ")
+            echo "- Text symbols: $TEXT_SYMS"
+            echo "- Data symbols: $DATA_SYMS"
+
+            echo ""
+            echo "## File size"
+            cp "$BIN" "${BIN}.stripped"
+            strip "${BIN}.stripped"
+            echo "- Unstripped: $(ls -l "$BIN" | awk '{print $5}') bytes"
+            echo "- Stripped: $(ls -l "${BIN}.stripped" | awk '{print $5}') bytes"
+          } | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Create version tag
+        if: inputs.tag
+        run: |
+          MAJOR=$(grep 'MOLD_VERSION_MAJOR' include/mold/version.h | grep -oE '[0-9]+$')
+          MINOR=$(grep 'MOLD_VERSION_MINOR' include/mold/version.h | grep -oE '[0-9]+$')
+          PATCH=$(grep 'MOLD_VERSION_PATCH' include/mold/version.h | grep -oE '[0-9]+$')
+          TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Tagging as $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"

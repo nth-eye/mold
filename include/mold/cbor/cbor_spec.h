@@ -1,0 +1,173 @@
+#ifndef MOLD_CBOR_SPEC_H
+#define MOLD_CBOR_SPEC_H
+
+/**
+ * @file
+ * @brief CBOR adapter vtables and `spec_t` specializations for built-in types.
+ *
+ * Defines constexpr `io_value_t` / `io_sink_t` vtables for CBOR primitives,
+ * concepts for format-specific callbacks (`cbor_read` / `cbor_emit`), and
+ * `cbor_spec_t<T>` - auto-generated from `spec_t<T>`. Types with format-specific
+ * callbacks get a dedicated handler accessing raw `cbor_primitive_t` / `cbor_sink_t`;
+ * others delegate to `spec_handler_t<T>::handler` shared with JSON.
+ */
+
+#include "mold/cbor/cbor_sink.h"
+#include "mold/cbor/cbor_util.h"
+#include "mold/refl/spec.h"
+
+namespace mold {
+namespace detail {
+
+/**
+ * @brief Vtable bridging `io_value_t` to `cbor_primitive_t` accessors.
+ *
+ */
+inline constexpr io_value_t::vtable_t cbor_value_vtable = {
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->null(); },
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->boolean(); },
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->integer(); },
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->uinteger(); },
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->number(); },
+    [](const void* p) { return static_cast<const cbor_primitive_t*>(p)->string(); },
+};
+
+/**
+ * @brief Vtable bridging `io_sink_t` to `cbor_sink_t` writers.
+ *
+ */
+inline constexpr io_sink_t::vtable_t cbor_sink_vtable = {
+    [](const void* p, bool v) {
+        static_cast<const cbor_sink_t*>(p)->write_bool(v);
+    },
+    [](const void* p, int64_t v) {
+        static_cast<const cbor_sink_t*>(p)->write_sint(v);
+    },
+    [](const void* p, uint64_t v) {
+        static_cast<const cbor_sink_t*>(p)->write_uint(v);
+    },
+    [](const void* p, double v) {
+        static_cast<const cbor_sink_t*>(p)->write_floating(v);
+    },
+    [](const void* p, std::string_view v) {
+        static_cast<const cbor_sink_t*>(p)->write_text(v);
+    },
+};
+
+}
+
+/**
+ * @brief Check whether `spec_t<T>` provides a CBOR-native read callback.
+ *
+ * @tparam T Value type
+ */
+template<class T>
+concept has_spec_cbor_read = requires(T& t, const cbor_primitive_t& v) { spec_t<T>::cbor_read(t, v); };
+
+/**
+ * @brief Check whether `spec_t<T>` provides a CBOR-native emit callback.
+ *
+ * @tparam T Value type
+ */
+template<class T>
+concept has_spec_cbor_emit = requires(const T& t, const cbor_sink_t& s) { spec_t<T>::cbor_emit(t, s); };
+
+/**
+ * @brief Call `spec_t<T>::cbor_read` and normalise the return to `void*`.
+ *
+ * Handles both void-returning and `error_t`-returning overloads.
+ *
+ * @tparam T Value type
+ * @param obj Target object to populate
+ * @param val Parsed CBOR primitive
+ * @return nullptr on success, encoded `error_t` on failure
+ */
+template<class T>
+inline void* spec_invoke_cbor_read(T& obj, const cbor_primitive_t& val)
+{
+    if constexpr (requires { { spec_t<T>::cbor_read(obj, val) } -> std::convertible_to<error_t>; }) {
+        error_t e = spec_t<T>::cbor_read(obj, val);
+        return e == error_t::ok ? nullptr : reinterpret_cast<void*>(static_cast<uintptr_t>(e));
+    } else {
+        spec_t<T>::cbor_read(obj, val);
+        return nullptr;
+    }
+}
+
+/**
+ * @brief Auto-generated CBOR handler from `spec_t<T>`.
+ *
+ * Types with format-specific callbacks (`cbor_read` / `cbor_emit`) get a
+ * dedicated handler; others fall back to the shared `spec_handler_t<T>::handler`.
+ *
+ * @tparam T Value type
+ */
+template<class T>
+struct cbor_spec_t {
+private:
+    using canonical = detail::io_canonical_t<T>;
+
+    static constexpr bool is_canonical_ = std::is_same_v<T, canonical>;
+    static constexpr bool has_format_specific_ = has_spec_cbor_read<T> || has_spec_cbor_emit<T>;
+
+    static void* format_handler_fn(io_type_t type, io_data_t data)
+    {
+        switch (type)
+        {
+        case io_type_t::prepare_value:
+            if constexpr (has_spec_cbor_read<T>) {
+                MOLD_ASSERT(data.io_val);
+                return spec_invoke_cbor_read(
+                    *static_cast<T*>(data.mptr),
+                    *static_cast<const cbor_primitive_t*>(data.io_val->impl));
+            } else if constexpr (has_spec_read<T>) {
+                MOLD_ASSERT(data.io_val);
+                return spec_invoke_read(*static_cast<T*>(data.mptr), *data.io_val);
+            } else if constexpr (has_spec_prepare<T>) {
+                return spec_t<T>::prepare(*static_cast<T*>(data.mptr), data.slot_idx);
+            }
+            return nullptr;
+
+        case io_type_t::emit_or_next:
+            if constexpr (has_spec_cbor_emit<T>) {
+                MOLD_ASSERT(data.io_sink);
+                spec_t<T>::cbor_emit(
+                    *static_cast<const T*>(data.cptr),
+                    *static_cast<const cbor_sink_t*>(data.io_sink->impl));
+                return nullptr;
+            } else if constexpr (has_spec_emit<T>) {
+                MOLD_ASSERT(data.io_sink);
+                spec_t<T>::emit(*static_cast<const T*>(data.cptr), *data.io_sink);
+                return nullptr;
+            } else if constexpr (has_spec_next<T>) {
+                return spec_t<T>::next(*static_cast<const T*>(data.cptr), data.previous_element);
+            }
+            return nullptr;
+
+        case io_type_t::visit_nullable:
+            if constexpr (has_spec_nullable<T>) {
+                return spec_t<T>::nullable(*static_cast<T*>(data.mptr), data.slot_idx);
+            }
+            return nullptr;
+
+        default:
+            return nullptr;
+        }
+    }
+
+public:
+    static constexpr io_handler_t handler = [] {
+        if constexpr (!is_canonical_) {
+            return cbor_spec_t<canonical>::handler;
+        } else if constexpr (has_format_specific_) {
+            return &format_handler_fn;
+        } else {
+            return spec_handler_t<canonical>::handler;
+        }
+    }();
+    static constexpr cbor_type_t expected = spec_t<T>::cbor_type;
+};
+
+}
+
+#endif
