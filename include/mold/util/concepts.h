@@ -95,7 +95,7 @@ concept is_optional = is_specialization_of<T, std::optional>;
  * @tparam T Type
  */
 template<class T>
-concept is_aggregate = std::is_aggregate_v<T> && !is_tuple<T>;
+concept is_aggregate = std::is_aggregate_v<T> && !is_tuple<T> && !std::is_union_v<T>;
 
 /**
  * @brief Concept for enumeration types.

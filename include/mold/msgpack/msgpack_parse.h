@@ -35,15 +35,19 @@ struct msgpack_policy_t {
 template<class T>
 constexpr size_t msgpack_count_nodes()
 {
-    using U = decay_optional_t<T>;
-    if constexpr (is_homogenous_container<U>) {
+    // Strip the field_t wrapper BEFORE the optional wrapper (see cbor_parse.h).
+    using U = decay_optional_t<decay_field_t<T>>;
+    // A custom spec_t makes U a wire-level leaf (e.g. a union serialized as
+    // one integer) — never decompose it, even if it is also an aggregate.
+    if constexpr (has_spec_read<U>) {
+        return 0u;
+    } else if constexpr (is_homogenous_container<U>) {
         return msgpack_count_nodes<typename container_traits_t<U>::element_type>();
-    }
-    if constexpr (is_aggregate<U> || is_tuple<U>) {
+    } else if constexpr (is_aggregate<U> || is_tuple<U>) {
         constexpr size_t direct = type_info_t<U>::members().size();
         constexpr size_t nested = [] <size_t... I> (std::index_sequence<I...>) {
             size_t m = 0;
-            ((m = std::max(m, msgpack_count_nodes<decay_optional_t<std::tuple_element_t<I, typename type_info_t<U>::tuple_type>>>())), ...);
+            ((m = std::max(m, msgpack_count_nodes<std::tuple_element_t<I, typename type_info_t<U>::tuple_type>>())), ...);
             return m;
         }(std::make_index_sequence<direct>());
         return direct + nested;

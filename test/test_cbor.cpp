@@ -386,3 +386,90 @@ TEST_CASE("CBOR cbor_from_fields composes into indefinite map")
     CHECK(mold::cbor_skip_value(ptr, end) == mold::error_t::ok);
     CHECK(ptr == end);
 }
+
+// ─── Nested field_t aggregates (regression) ─────────────────
+//
+// A field_t member whose value is itself a field_t aggregate (optionally
+// wrapped in std::optional) must decode member-wise. Historically the
+// member reflection stripped the wrappers in the wrong order and the
+// found-flags sizing ignored field_t, so the nested sub-map either parsed
+// into nowhere (optional stayed set but empty) or overflowed the flags.
+// Also covers a union with a custom spec_t used as a wire-level leaf.
+
+union cbor_bits_entry_t {
+    struct {
+        uint32_t lo : 16;
+        uint32_t hi : 16;
+    };
+    uint32_t value;
+};
+
+namespace mold {
+template<>
+struct spec_t<cbor_bits_entry_t> {
+    static constexpr json_type_t json_type = json_type_t::integer;
+    static constexpr cbor_type_t cbor_type = cbor_type_t::integer;
+    static error_t read(cbor_bits_entry_t& out, const io_value_t& val)
+    {
+        out.value = uint32_t(val.uinteger());
+        return error_t::ok;
+    }
+    static void emit(const cbor_bits_entry_t& in, const io_sink_t& sink)
+    {
+        sink.write_uint(in.value);
+    }
+};
+}
+
+struct cbor_nested_inner_t {
+    mold::field_t<95, uint8_t> volume;
+    mold::field_t<97, bool>    guard;
+    mold::field_t<92, std::array<cbor_bits_entry_t, 4>> entries;
+};
+
+struct cbor_nested_required_t {
+    mold::field_t<96, cbor_nested_inner_t> inner;
+};
+
+struct cbor_nested_optional_t {
+    mold::field_t<96, std::optional<cbor_nested_inner_t>> inner;
+};
+
+TEST_CASE("CBOR nested field_t aggregate decodes member-wise")
+{
+    // {96: {95: 7, 97: true, 92: [1, 2, 3, 4]}}
+    const uint8_t wire[] = {
+        0xa1, 0x18, 0x60,
+            0xa3, 0x18, 0x5f, 0x07,
+                  0x18, 0x61, 0xf5,
+                  0x18, 0x5c, 0x84, 0x01, 0x02, 0x03, 0x04,
+    };
+
+    SUBCASE("required nested struct") {
+        cbor_nested_required_t out{};
+        auto span = std::span<const uint8_t>(wire, sizeof(wire));
+        REQUIRE(mold::cbor_to(out, span, true) == mold::error_t::ok);
+        CHECK(out.inner.value.volume.value == 7);
+        CHECK(out.inner.value.guard.value == true);
+        CHECK(out.inner.value.entries.value[0].value == 1);
+        CHECK(out.inner.value.entries.value[3].value == 4);
+    }
+
+    SUBCASE("optional nested struct") {
+        cbor_nested_optional_t out{};
+        auto span = std::span<const uint8_t>(wire, sizeof(wire));
+        REQUIRE(mold::cbor_to(out, span, true) == mold::error_t::ok);
+        REQUIRE(out.inner.value.has_value());
+        CHECK(out.inner.value->volume.value == 7);
+        CHECK(out.inner.value->guard.value == true);
+        CHECK(out.inner.value->entries.value[2].value == 3);
+    }
+
+    SUBCASE("optional nested struct absent") {
+        const uint8_t empty_map[] = {0xa0};
+        cbor_nested_optional_t out{};
+        auto span = std::span<const uint8_t>(empty_map, sizeof(empty_map));
+        REQUIRE(mold::cbor_to(out, span, true) == mold::error_t::ok);
+        CHECK(!out.inner.value.has_value());
+    }
+}

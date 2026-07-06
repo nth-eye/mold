@@ -458,7 +458,7 @@ private:
             std::array<reflection_t, direct_members_> arr = {};
             [&] <size_t... I> (std::index_sequence<I...>) {
                 ((arr[I] = make_reflection<std::tuple_element_t<I, tuple_type>>(
-                    type_info_t<decay_field_t<decay_optional_t<std::tuple_element_t<I, tuple_type>>>>::members(),
+                    type_info_t<decay_optional_t<decay_field_t<std::tuple_element_t<I, tuple_type>>>>::members(),
                     member_info_t<T, I>::name(),
                     member_info_t<T, I>::offset())), ...);
 #if (MOLD_REFLECTION_CBOR_ENABLED && MOLD_REFLECTION_CBOR_FIELD_KEYS)
