@@ -213,16 +213,58 @@ struct spec_t<field_t<Key, T>> {
     static constexpr cbor_type_t cbor_type = spec_t<T>::cbor_type;
     static constexpr bool write_null = spec_write_null_v<T>;
 
-    static void read(field_t<Key, T>& out, const io_value_t& val)
+    static decltype(auto) read(field_t<Key, T>& out, const io_value_t& val)
         requires has_spec_read<T>
     {
-        spec_t<T>::read(out.value, val);
+        return spec_t<T>::read(out.value, val);
     }
 
     static void emit(const field_t<Key, T>& in, const io_sink_t& sink)
         requires has_spec_emit<T>
     {
         spec_t<T>::emit(in.value, sink);
+    }
+
+    template<class Primitive>
+    static decltype(auto) json_read(field_t<Key, T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::json_read(value, val); }
+    {
+        return spec_t<T>::json_read(out.value, val);
+    }
+
+    template<class Sink>
+    static void json_emit(const field_t<Key, T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::json_emit(value, sink); }
+    {
+        spec_t<T>::json_emit(in.value, sink);
+    }
+
+    template<class Primitive>
+    static decltype(auto) cbor_read(field_t<Key, T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::cbor_read(value, val); }
+    {
+        return spec_t<T>::cbor_read(out.value, val);
+    }
+
+    template<class Sink>
+    static void cbor_emit(const field_t<Key, T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::cbor_emit(value, sink); }
+    {
+        spec_t<T>::cbor_emit(in.value, sink);
+    }
+
+    template<class Primitive>
+    static decltype(auto) msgpack_read(field_t<Key, T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::msgpack_read(value, val); }
+    {
+        return spec_t<T>::msgpack_read(out.value, val);
+    }
+
+    template<class Sink>
+    static void msgpack_emit(const field_t<Key, T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::msgpack_emit(value, sink); }
+    {
+        spec_t<T>::msgpack_emit(in.value, sink);
     }
 
     static void* prepare(field_t<Key, T>& out, size_t slot_idx)

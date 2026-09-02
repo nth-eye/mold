@@ -305,6 +305,60 @@ struct spec_t<std::optional<T>> {
         }
     }
 
+    template<class Primitive>
+    static error_t json_read(std::optional<T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::json_read(value, val); }
+    {
+        return format_read(out, val, [](T& value, const Primitive& primitive) -> decltype(auto) {
+            return spec_t<T>::json_read(value, primitive);
+        });
+    }
+
+    template<class Sink>
+    static void json_emit(const std::optional<T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::json_emit(value, sink); }
+    {
+        if (in.has_value()) {
+            spec_t<T>::json_emit(*in, sink);
+        }
+    }
+
+    template<class Primitive>
+    static error_t cbor_read(std::optional<T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::cbor_read(value, val); }
+    {
+        return format_read(out, val, [](T& value, const Primitive& primitive) -> decltype(auto) {
+            return spec_t<T>::cbor_read(value, primitive);
+        });
+    }
+
+    template<class Sink>
+    static void cbor_emit(const std::optional<T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::cbor_emit(value, sink); }
+    {
+        if (in.has_value()) {
+            spec_t<T>::cbor_emit(*in, sink);
+        }
+    }
+
+    template<class Primitive>
+    static error_t msgpack_read(std::optional<T>& out, const Primitive& val)
+        requires requires(T& value) { spec_t<T>::msgpack_read(value, val); }
+    {
+        return format_read(out, val, [](T& value, const Primitive& primitive) -> decltype(auto) {
+            return spec_t<T>::msgpack_read(value, primitive);
+        });
+    }
+
+    template<class Sink>
+    static void msgpack_emit(const std::optional<T>& in, const Sink& sink)
+        requires requires(const T& value) { spec_t<T>::msgpack_emit(value, sink); }
+    {
+        if (in.has_value()) {
+            spec_t<T>::msgpack_emit(*in, sink);
+        }
+    }
+
     static void* prepare(std::optional<T>& out, size_t slot_idx)
         requires has_spec_prepare<T>
     {
@@ -325,7 +379,26 @@ struct spec_t<std::optional<T>> {
         }
         return out.has_value() ? &out.value() : nullptr;
     }
+private:
+    template<class Primitive, class Reader>
+    static error_t format_read(std::optional<T>& out, const Primitive& val, Reader reader)
+    {
+        if constexpr (!is_homogenous_container<T>) {
+            if (val.null()) {
+                out.reset();
+                return error_t::ok;
+            }
+        }
+        T& contained = out.has_value() ? out.value() : out.emplace();
+        if constexpr (requires { { reader(contained, val) } -> std::convertible_to<error_t>; }) {
+            return reader(contained, val);
+        } else {
+            reader(contained, val);
+            return error_t::ok;
+        }
+    }
 };
+
 
 }
 

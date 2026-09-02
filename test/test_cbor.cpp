@@ -243,6 +243,69 @@ TEST_CASE("field_t CBOR with container types")
     CHECK(decoded.triple.value == instance.triple.value);
 }
 
+struct optional_bytes_response_t {
+    std::optional<mold::bytes_view_t> data;
+};
+
+TEST_CASE("optional bytes_view_t CBOR decode")
+{
+    static constexpr uint8_t document[] = {
+        0xa1, 0x64, 'd', 'a', 't', 'a', 0x44, 0xde, 0xad, 0xbe, 0xef
+    };
+    optional_bytes_response_t decoded = {};
+
+    std::span<const uint8_t> input = document;
+    REQUIRE(mold::cbor_to(decoded, input) == mold::error_t::ok);
+    REQUIRE(decoded.data.has_value());
+    CHECK(decoded.data->size() == 4);
+    CHECK(memcmp(decoded.data->ptr, document + 7, 4) == 0);
+}
+
+struct dfu_response_t {
+    mold::field_t<81, bool> retry;
+    mold::field_t<54, std::optional<mold::bytes_view_t>> data;
+    mold::field_t<75, std::optional<uint32_t>> crc;
+};
+
+TEST_CASE("field_t optional bytes_view_t CBOR round-trip")
+{
+    static constexpr uint8_t document[] = {
+        0xa3,
+        0x18, 0x51, 0xf4,
+        0x18, 0x4b, 0x1a, 0xde, 0xad, 0xbe, 0xef,
+        0x18, 0x36, 0x44, 0xca, 0xfe, 0xba, 0xbe,
+    };
+    dfu_response_t decoded = {};
+
+    std::span<const uint8_t> input = document;
+    REQUIRE(mold::cbor_to(decoded, input) == mold::error_t::ok);
+    CHECK(decoded.retry.value == false);
+    REQUIRE(decoded.data.value.has_value());
+    CHECK(decoded.data.value->size() == 4);
+    CHECK(memcmp(decoded.data.value->ptr, document + 14, 4) == 0);
+    REQUIRE(decoded.crc.value.has_value());
+    CHECK(*decoded.crc.value == 0xdeadbeef);
+
+    uint8_t too_small[2];
+    dfu_response_t insufficient = {};
+    insufficient.data.value.emplace(std::span<uint8_t>(too_small));
+    std::span<const uint8_t> insufficient_input = document;
+    CHECK(mold::cbor_to(insufficient, insufficient_input) == mold::error_t::handler_failure);
+
+    uint8_t encoded_buffer[64];
+    std::span<uint8_t> encoded = encoded_buffer;
+    REQUIRE(mold::cbor_from(decoded, encoded) == mold::error_t::ok);
+
+    dfu_response_t replayed = {};
+    std::span<const uint8_t> encoded_input = encoded;
+    REQUIRE(mold::cbor_to(replayed, encoded_input) == mold::error_t::ok);
+    REQUIRE(replayed.data.value.has_value());
+    CHECK(replayed.data.value->size() == 4);
+    CHECK(memcmp(replayed.data.value->ptr, document + 14, 4) == 0);
+    REQUIRE(replayed.crc.value.has_value());
+    CHECK(*replayed.crc.value == 0xdeadbeef);
+}
+
 struct array_key_t {
     mold::field_t<std::array<int, 3>{1, 2, 3}, bool> flag;
     mold::field_t<std::array<int, 2>{10, 20}, int32_t> val;

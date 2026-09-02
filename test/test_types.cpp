@@ -228,3 +228,58 @@ TEST_CASE("bytes_view_t JSON read fails without capacity")
     view_packet_t decoded = {}; // no buffer → cap=0
     CHECK(mold::json_to(decoded, sv) == mold::error_t::handler_failure);
 }
+
+struct format_wrapped_view_packet_t {
+    mold::field_t<54, std::optional<mold::bytes_view_t>> optional_payload;
+    mold::nullable_t<mold::bytes_view_t> nullable_payload;
+};
+
+TEST_CASE("format-specific byte callbacks pass through wrappers in JSON")
+{
+    uint8_t raw[] = {0xde, 0xad, 0xbe, 0xef};
+    format_wrapped_view_packet_t packet = {};
+    packet.optional_payload.value.emplace(mold::bytes_view_t(raw, sizeof(raw)));
+    packet.nullable_payload.emplace(mold::bytes_view_t(raw, sizeof(raw)));
+
+    char encoded_buffer[256];
+    std::span<char> encoded = encoded_buffer;
+    REQUIRE(mold::json_from(packet, encoded, 0) == mold::error_t::ok);
+
+    uint8_t optional_buffer[4];
+    uint8_t nullable_buffer[4];
+    format_wrapped_view_packet_t decoded = {};
+    decoded.optional_payload.value.emplace(std::span<uint8_t>(optional_buffer));
+    decoded.nullable_payload.emplace(std::span<uint8_t>(nullable_buffer));
+    std::string_view input(encoded.data(), encoded.size());
+    REQUIRE(mold::json_to(decoded, input) == mold::error_t::ok);
+
+    REQUIRE(decoded.optional_payload.value.has_value());
+    CHECK(decoded.optional_payload.value->size() == sizeof(raw));
+    CHECK(memcmp(decoded.optional_payload.value->ptr, raw, sizeof(raw)) == 0);
+    REQUIRE(decoded.nullable_payload.has_value());
+    CHECK(decoded.nullable_payload->size() == sizeof(raw));
+    CHECK(memcmp(decoded.nullable_payload->ptr, raw, sizeof(raw)) == 0);
+}
+
+TEST_CASE("format-specific byte callbacks pass through wrappers in MessagePack")
+{
+    uint8_t raw[] = {0xca, 0xfe, 0xba, 0xbe};
+    format_wrapped_view_packet_t packet = {};
+    packet.optional_payload.value.emplace(mold::bytes_view_t(raw, sizeof(raw)));
+    packet.nullable_payload.emplace(mold::bytes_view_t(raw, sizeof(raw)));
+
+    uint8_t encoded_buffer[256];
+    std::span<uint8_t> encoded = encoded_buffer;
+    REQUIRE(mold::msgpack_from(packet, encoded) == mold::error_t::ok);
+
+    format_wrapped_view_packet_t decoded = {};
+    std::span<const uint8_t> input = encoded;
+    REQUIRE(mold::msgpack_to(decoded, input) == mold::error_t::ok);
+
+    REQUIRE(decoded.optional_payload.value.has_value());
+    CHECK(decoded.optional_payload.value->size() == sizeof(raw));
+    CHECK(memcmp(decoded.optional_payload.value->ptr, raw, sizeof(raw)) == 0);
+    REQUIRE(decoded.nullable_payload.has_value());
+    CHECK(decoded.nullable_payload->size() == sizeof(raw));
+    CHECK(memcmp(decoded.nullable_payload->ptr, raw, sizeof(raw)) == 0);
+}

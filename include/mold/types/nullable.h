@@ -98,6 +98,48 @@ struct spec_t<nullable_t<T>> {
         spec_t<std::optional<T>>::emit(in.inner, sink);
     }
 
+    template<class Primitive>
+    static decltype(auto) json_read(nullable_t<T>& out, const Primitive& val)
+        requires requires(std::optional<T>& value) { spec_t<std::optional<T>>::json_read(value, val); }
+    {
+        return spec_t<std::optional<T>>::json_read(out.inner, val);
+    }
+
+    template<class Sink>
+    static void json_emit(const nullable_t<T>& in, const Sink& sink)
+        requires requires(const std::optional<T>& value) { spec_t<std::optional<T>>::json_emit(value, sink); }
+    {
+        spec_t<std::optional<T>>::json_emit(in.inner, sink);
+    }
+
+    template<class Primitive>
+    static decltype(auto) cbor_read(nullable_t<T>& out, const Primitive& val)
+        requires requires(std::optional<T>& value) { spec_t<std::optional<T>>::cbor_read(value, val); }
+    {
+        return spec_t<std::optional<T>>::cbor_read(out.inner, val);
+    }
+
+    template<class Sink>
+    static void cbor_emit(const nullable_t<T>& in, const Sink& sink)
+        requires requires(const std::optional<T>& value) { spec_t<std::optional<T>>::cbor_emit(value, sink); }
+    {
+        spec_t<std::optional<T>>::cbor_emit(in.inner, sink);
+    }
+
+    template<class Primitive>
+    static decltype(auto) msgpack_read(nullable_t<T>& out, const Primitive& val)
+        requires requires(std::optional<T>& value) { spec_t<std::optional<T>>::msgpack_read(value, val); }
+    {
+        return spec_t<std::optional<T>>::msgpack_read(out.inner, val);
+    }
+
+    template<class Sink>
+    static void msgpack_emit(const nullable_t<T>& in, const Sink& sink)
+        requires requires(const std::optional<T>& value) { spec_t<std::optional<T>>::msgpack_emit(value, sink); }
+    {
+        spec_t<std::optional<T>>::msgpack_emit(in.inner, sink);
+    }
+
     static void* prepare(nullable_t<T>& out, size_t slot_idx)
         requires has_spec_prepare<std::optional<T>>
     {
